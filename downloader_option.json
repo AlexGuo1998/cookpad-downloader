@@ -1,0 +1,19 @@
+{
+  "chunk_size": 10240,
+  "timeout_connect": 10,
+  "timeout_read": 10,
+  "min_rate": 512,
+  "headers": {},
+  "cookies": {},
+  "proxies": {},
+  "temp_suffix": ".download",
+  "retry": 3,
+  "retry_delay": 1,
+  "use_validator": true,
+  "validator_chunk_size": 10485760,
+  "validate_retry": 1,
+  "queue_size": 3,
+  "progress_bar_ascii": null,
+  "hide_progress_bar": false,
+  "no_output": false
+}
