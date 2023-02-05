@@ -181,6 +181,7 @@ class SingleDownloader:
                 start_len = f.tell()
                 headers['Range'] = f'bytes={start_len}-'
             else:
+                f.seek(0, io.SEEK_SET)
                 start_len = 0
             r = self.session.get(
                 self.url,
