@@ -8,32 +8,25 @@ import requests
 import urllib.parse
 import cookpad_constants
 
-AUTH_CENTER_ENDPOINT_FULL = 'https://auth.cookpad.com' + '/oauth/token'
-# AUTH_CENTER_ENDPOINT_FULL = 'https://httpbin.org/post'
-AUTH_CENTER_CLIENT_ID = bytes(a ^ b for a, b in zip(
-    b'\xb44\xec\xa5\x03\x7f\xcao\xb6X\xeb\xf4\xbb\xe4\xe5\x08!\xeb\x0eG\xf5\\\x95\xd1Q&\x01A\x96~v\x14',
-    b'K\\\x0c\xd6f\xb9\x9cEjj~\xba:\xb2-q\xc2\xf3\xff\xc5\x9c\x05\x8e\x1e\xde\xf0#\\\xfb\x89\x03\xf3')).hex()
-AUTH_CENTER_SECRET_KEY = bytes(a ^ b for a, b in zip(
-    b'J\xda\xb1\x8d\xf1\xfe\xba\x17\xc1\xde\x8cE\xaeL\x1f\xef\x046]\xdb',
-    b'V\x963A\x98\rlIw5L_\x86ZK\x00z`\x16\x8d')).hex().encode('ascii')
-COOKPAD_TV_API_ENDPOINT = 'https://api.cookpad.tv/'
+_key1 = bytes(a ^ b for a, b in zip(
+    b'\x1a\xa2\xfa<\x7fl\xaeq\xea\xd9\x15@u1\xd9V\x1aZ\xc6s\xa9\xf3\xa7\xccz\xb8\xa0\xbd\xd2&BN\x8f\xbd\xc2>\x87*M',
+    b'[\xeb\x80],\x15\xec5\xbb\xba|#\x0ct\xb6\x03*?\x89=\x90\x96\xd5\xf4\x14\xc1\xf8\xfa\xa6\x103\x16\xc9\x88\x91y\xf7\x1c\x00')).decode('utf-8')
+_key2 = bytes(a ^ b for a, b in zip(
+    b'\xfc\x16+J\xdf \x9008\xb5\x9cq\xf7\x10\xb3\xca\x107\xb6\xf8',
+    b'nJ\x1ae\x7f\x9f+\x7f\xe8N\x1c\x0e\x90y\xc0k\xce\xa9\xd6Y')).hex().upper()
 
-'''
-method
-###### Class p310g.p344c.p351b.AuthCenterClient (g.c.b.a)
-.class public final Lg/c/b/a;
-.super Ljava/lang/Object;
-.source "AuthCenterClient.kt"
+AUTH_CENTER_ENDPOINT_FULL = 'https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key=' + _key1
+AUTH_REFRESH_URL = 'https://securetoken.googleapis.com/v1/token?key=' + _key1
+AUTH_HEADERS = {
+    # 'X-Client-Signature': sign,
+    # 'X-CDID': self._get_cdid(),
+    'X-Android-Package': 'com.cookpad.android.cookpad_tv',
+    'X-Android-Cert': _key2,
+    'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 7.1.1; ONEPLUS A3010 Build/NMF26F)',
+    'Accept': None,
+}
 
-key
-###### Class com.cookpad.android.cookpad_tv.BuildConfig (com.cookpad.android.cookpad_tv.b)
-.class public final Lcom/cookpad/android/cookpad_tv/b;
-.super Ljava/lang/Object;
-.source "BuildConfig.java"
-
-api
-com.cookpad.android.cookpad_tv.core.data.api.CookpadTVService
-'''
+COOKPAD_TV_API_ENDPOINT = 'https://api.natslive.jp/'
 
 
 class NotLoggedInError(ValueError):
@@ -42,14 +35,17 @@ class NotLoggedInError(ValueError):
 
 
 class LoginError(ValueError):
-    def __init__(self, code, error, description):
+    def __init__(self, code, description, detail):
         self.code = code
-        self.error = error
         self.description = description
+        self.detail = detail
 
     def __str__(self):
-        return f'Get token error {self.error} (HTTP code {self.code}): {self.description}'
-        # return f'Invalid box {self.box} when splitting'
+        return (
+            f'Get token error (code {self.code}): {self.description}\n'
+            f'Detail:\n'
+            f'{self.detail}'
+        )
 
 
 class LoginManager:
@@ -68,14 +64,13 @@ class LoginManager:
         self.username = username
         self.password = password if save_password else None
         data = {
-            'grant_type': 'signed_password',
-            'username': username,
+            'clientType': "CLIENT_TYPE_ANDROID",
+            'email': username,
             'password': password,
-            'client_id': AUTH_CENTER_CLIENT_ID,
-            'scope': 'bundle.cookpad',
+            'returnSecureToken': True
         }
-        r = self._send_auth_request(data)
-        self._decode_auth_result(r)
+        r = requests.post(AUTH_CENTER_ENDPOINT_FULL, json=data, headers=AUTH_HEADERS)
+        self._decode_auth_result(r, is_refresh=False)
 
     def logout(self, cleanup=False):
         try:
@@ -98,58 +93,44 @@ class LoginManager:
         if not force and time.time() < self.expire_ts:
             return False  # no need to refresh
         data = {
-            'grant_type': 'signed_refresh_token',
+            'grant_type': 'refresh_token',
             'refresh_token': self.refresh_token,
-            'client_id': AUTH_CENTER_CLIENT_ID,
-            'scope': 'bundle.cookpad',
         }
-        r = self._send_auth_request(data)
+        r = requests.post(AUTH_REFRESH_URL, json=data, headers=AUTH_HEADERS)
         try:
-            self._decode_auth_result(r)
+            self._decode_auth_result(r, is_refresh=True)
         except LoginError:
             if self.username is None or self.password is None: raise
             # try password login
             self.login(self.username, self.password, save_password=True)
         return True
 
-    def api_post(self, path, params=None, payload=None, fail_raise=False):
+    def api_post(self, path, *args, fail_raise=False, **kwargs):
         if path.startswith('/'):
             path = path[1:]
         url = COOKPAD_TV_API_ENDPOINT + path
         headers = {
-            # 'User-Agent': 'com.cookpad.android.cookpad_tv/200701; Android/23; MuMu; ; release-023b44951',
             'User-Agent': None,
-            # 'X-COOKPAD-TV-APP-VERSION': '200701',
-            # 'X-COOKPAD-TV-OS-VERSION': '23',
             'X-COOKPAD-TV-CDID': self._get_cdid(),
-            # 'X-Model': 'MuMu',
-            # 'X-Product': 'cancro',
-            # 'X-Brand': 'Android',
-            'Authorization': self.access_token,
+            'X-Authorization': self.access_token,
         }
-        r = requests.post(url, params=params, data=payload, headers=headers)
+        r = requests.post(url, *args, **kwargs, headers=headers)
         try:
             self._api_auth_check(r)
             return r
         except NotLoggedInError:
             if fail_raise: raise
             self.refresh(force=True)
-            return self.api_post(path, params, payload, fail_raise=True)
+            return self.api_post(path, *args, **kwargs, fail_raise=True)
 
     def api_get(self, path, params=None, fail_raise=False):
         if path.startswith('/'):
             path = path[1:]
         url = COOKPAD_TV_API_ENDPOINT + path
         headers = {
-            # 'User-Agent': 'com.cookpad.android.cookpad_tv/200701; Android/23; MuMu; ; release-023b44951',
             'User-Agent': None,
-            # 'X-COOKPAD-TV-APP-VERSION': '200701',
-            # 'X-COOKPAD-TV-OS-VERSION': '23',
             'X-COOKPAD-TV-CDID': self._get_cdid(),
-            # 'X-Model': 'MuMu',
-            # 'X-Product': 'cancro',
-            # 'X-Brand': 'Android',
-            'Authorization': self.access_token,
+            'X-Authorization': self.access_token,
         }
         r = requests.get(url, params=params, headers=headers)
         try:
@@ -159,6 +140,15 @@ class LoginManager:
             if fail_raise: raise
             self.refresh(force=True)
             return self.api_get(path, params, fail_raise=True)
+
+    def api_graphql(self, operationName, query, variables=None):
+        variables = variables or {}
+        r = self.api_post('/api/graphql', json={
+            "operationName": operationName,
+            "query": query,
+            "variables": variables
+        })
+        return r
 
     def check(self, access_web=True) -> typing.Tuple[bool, typing.Any]:
         result = None
@@ -193,54 +183,60 @@ class LoginManager:
         return self.cdid
 
     def _send_auth_request(self, payload: dict):
-        if 'nonce' not in payload:
-            payload['nonce'] = str(int(time.time() * 1000))
-
-        data = []
-        for k, v in payload.items():
-            k = urllib.parse.quote(k, encoding='utf-8')
-            v = urllib.parse.quote(v, encoding='utf-8')
-            data.append(f'{k}={v}')
-        data_str = '&'.join(data).encode('utf-8')
-
-        # HMAC-SHA256
-        sign = hmac.new(AUTH_CENTER_SECRET_KEY, data_str, hashlib.sha256).hexdigest()
-
         headers = {
-            'X-Client-Signature': sign,
-            'X-CDID': self._get_cdid(),
-            'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
-            'User-Agent': 'okhttp/4.8.1',
+            # 'X-Client-Signature': sign,
+            # 'X-CDID': self._get_cdid(),
+            'X-Android-Package': 'com.cookpad.android.cookpad_tv',
+            'X-Android-Cert': '925C312FA0BFBB4FD0FB807F676973A1DE9E60A1',
+            'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 7.1.1; ONEPLUS A3010 Build/NMF26F)',
             'Accept': None,
         }
-        r = requests.post(AUTH_CENTER_ENDPOINT_FULL, data_str, headers=headers)
+        r = requests.post(AUTH_CENTER_ENDPOINT_FULL, json=payload, headers=headers)
         return r
 
-    def _decode_auth_result(self, r):
+    def _decode_auth_result(self, r, is_refresh):
         if r.status_code != 200:
-            error = None
+            detail = r.content
+            code = r.status_code
             description = None
             try:
                 j = r.json()
                 error = j.get('error')
-                description = j.get('error_description')
+                code = error.get('code', code)
+                description = error.get('message')
             except Exception:
                 pass
-            raise LoginError(r.status_code, error, description)
+            raise LoginError(code, description, detail)
         j = r.json()
-        # j = {
-        #     'access_token': '...',
-        #     'expires_in': '3600',
-        #     'refresh_token': '...',
-        #     'resource_owner_id': 39907799,
-        #     'scope': 'bundle.cookpad',
-        #     'token_type': 'bearer'
-        # }
-        token_type = j['token_type']
-        assert token_type == 'bearer'
-        access_token = 'Bearer ' + j['access_token']
-        refresh_token = j['refresh_token']
-        expire_ts = int(time.time()) + int(j['expires_in'])
+        if not is_refresh:
+            # j = {
+            #     'kind': 'identitytoolkit#VerifyPasswordResponse',
+            #     'localId': '...',
+            #     'email': '...@gmail.com',
+            #     'displayName': '',
+            #     'idToken': '...',
+            #     'registered': True,
+            #     'refreshToken': '...',
+            #     'expiresIn': '3600',
+            # }
+            access_token = 'Bearer ' + j['idToken']
+            refresh_token = j['refreshToken']
+            expire_ts = int(time.time()) + int(j['expiresIn'])
+        else:
+            # j = {
+            #     'access_token': '...',
+            #     'expires_in': '3600',
+            #     'id_token': '...',
+            #     'project_id': '123',
+            #     'refresh_token': '...',
+            #     'token_type': 'Bearer',
+            #     'user_id': '...'
+            # }
+            token_type = j['token_type']
+            assert token_type == 'Bearer'
+            access_token = 'Bearer ' + j['id_token']
+            refresh_token = j['refresh_token']
+            expire_ts = int(time.time()) + int(j['expires_in'])
         self.modified = True
         self.access_token = access_token
         self.refresh_token = refresh_token
