@@ -4,7 +4,7 @@ import zipfile
 import PyInstaller.__main__
 
 EXE_NAME = 'CookpadLiveDown'
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 ADDITIONAL_FILES = [
     # 'readme.txt',
     'downloader_option.json',
